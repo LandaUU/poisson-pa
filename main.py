@@ -1,14 +1,17 @@
-import itertools
+import contextlib
+import io
+import os
+from dataclasses import dataclass
+from typing import Callable, Iterable, Optional, Self, Sequence
+
 import matplotlib
+import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import scipy as sp
-from dataclasses import dataclass
-import matplotlib.pyplot as plt
 
-from typing import Self, Optional, Callable, Iterable, Sequence
-
-matplotlib.use("TkAgg")
+if "MPLBACKEND" not in os.environ:
+    matplotlib.use("TkAgg" if os.environ.get("DISPLAY") else "Agg")
 
 
 def lambda_f(k, c):
@@ -88,6 +91,34 @@ class Graph:
         weights = np.exp(log_probs - np.max(log_probs))
         return weights
 
+    def sample_delta_m(self, current_round: int, k: int) -> int:
+        weights = self._get_probabilities(n=current_round - 1, c=self.params.c, k=k)
+        return int(self.rng.choice(k, p=weights / weights.sum()) + 1)
+
+    def sample_step_edges(self, current_round: int, k: int) -> tuple[list[tuple[int, int]], int]:
+        m = self.sample_delta_m(current_round=current_round, k=k)
+        p_in, p_out = self._get_in_out_probs()
+        node_pointer = self._graph.number_of_nodes()
+        n0 = self._graph.number_of_nodes()
+        edges: list[tuple[int, int]] = []
+        new_nodes = 0
+
+        for _ in range(m):
+            if self.rng.random() < self.params.p:
+                node_2 = self.rng.choice(n0, p=p_in)
+                edge = (node_pointer, node_2)
+                edges.append(edge)
+                node_pointer += 1
+                new_nodes += 1
+            else:
+                w, v = (
+                    self.rng.choice(n0, p=p_out),
+                    self.rng.choice(n0, p=p_in),
+                )
+                edges.append((w, v))
+
+        return edges, new_nodes
+
     def _get_in_out_probs(self) -> tuple[np.ndarray, np.ndarray]:
         """
         Returns (p_in, p_out) over current node ids [0..n-1].
@@ -98,12 +129,8 @@ class Graph:
             raise RuntimeError("Graph is empty; call initialize().")
 
         # degrees in MultiDiGraph are ints; convert to float arrays
-        in_deg = np.fromiter(
-            (d for _, d in self._graph.in_degree(range(n))), dtype=np.float64, count=n
-        )
-        out_deg = np.fromiter(
-            (d for _, d in self._graph.out_degree(range(n))), dtype=np.float64, count=n
-        )
+        in_deg = np.fromiter((d for _, d in self._graph.in_degree(range(n))), dtype=np.float64, count=n)
+        out_deg = np.fromiter((d for _, d in self._graph.out_degree(range(n))), dtype=np.float64, count=n)
 
         pin = in_deg + float(self.params.delta_in)
         pout = out_deg + float(self.params.delta_out)
@@ -118,9 +145,7 @@ class Graph:
         pout /= pout_sum
         return pin, pout
 
-    def _simple_message_distribution(
-        self, G: nx.MultiDiGraph, edges: list[tuple[int, int]]
-    ) -> None:
+    def _simple_message_distribution(self, G: nx.MultiDiGraph, edges: list[tuple[int, int]]) -> None:
         """В случае, если передача сообщения не происходит далее по цепочке,
         то можно использовать эту функцию"""
 
@@ -133,37 +158,9 @@ class Graph:
 
     def evolute(self, rounds: int, k: int = 10**5) -> Self:
         for current_round in range(self._round + 1, self._round + rounds + 1):
-            K_weights = self._get_probabilities(
-                n=current_round - 1, c=self.params.c, k=k
-            )
-            M = self.rng.choice(k, p=K_weights / K_weights.sum()) + 1
-            print(f"Delta M_{current_round} = {M}")
-
-            p_in, p_out = self._get_in_out_probs()
-            node_pointer = self._graph.number_of_nodes()
-            n0 = self._graph.number_of_nodes()
-            edges = []
-            self.N.append(0)
-            for _ in range(M):
-                if self.rng.random() < self.params.p:
-                    # alpha case (no loops)
-
-                    node_2 = self.rng.choice(n0, p=p_in)
-
-                    edge = (node_pointer, node_2)
-
-                    edges.append(edge)
-
-                    node_pointer += 1
-
-                    self.N[-1] += 1
-                else:
-                    # beta case
-                    w, v = (
-                        self.rng.choice(n0, p=p_out),
-                        self.rng.choice(n0, p=p_in),
-                    )
-                    edges.append((w, v))
+            edges, new_nodes = self.sample_step_edges(current_round=current_round, k=k)
+            print(f"Delta M_{current_round} = {len(edges)}")
+            self.N.append(new_nodes)
 
             self._graph.add_edges_from(edges)
 
@@ -174,6 +171,17 @@ class Graph:
 
         self._round += rounds
         return self
+
+    def totals(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        n_total = np.asarray(self.N_total, dtype=np.int64)
+        s_total = np.asarray(self.S_total, dtype=np.int64)
+        ratio = np.divide(
+            s_total,
+            n_total,
+            out=np.zeros_like(s_total, dtype=np.float64),
+            where=(n_total > 0),
+        )
+        return n_total, s_total, ratio
 
     def draw(self, title: Optional[str] = None):
         fig = plt.figure("Graph", figsize=(4, 4), clear=True)
@@ -190,10 +198,7 @@ class Graph:
             pos={0: (0, 0), 1: (2, 2)},
         )
         nodes = list(self._graph.nodes())
-        node_colors = [
-            "#2d2d2d" if self._graph.nodes[n].get("message", False) else "#a4a2a2"
-            for n in nodes
-        ]
+        node_colors = ["#2d2d2d" if self._graph.nodes[n].get("message", False) else "#a4a2a2" for n in nodes]
 
         nx.draw_networkx(
             self._graph,
@@ -221,8 +226,8 @@ class Graph:
         series: Iterable[tuple[Sequence[float], Sequence[float], str]],
         *,
         title: str = "",
-        xlabel: str = "k",
-        ylabel: str = "# S_k/N_k",
+        xlabel: str = "Шаг эволюции",
+        ylabel: str = r"Доля информированных узлов $|S_k| / N_k$",
         filename: str = "",
     ) -> None:
         """
@@ -235,9 +240,7 @@ class Graph:
         for i, (N_total, S_total, label) in enumerate(series):
             N = np.asarray(N_total, dtype=np.float64)
             S = np.asarray(S_total, dtype=np.float64)
-            frac = np.divide(
-                S, N, out=np.zeros_like(S, dtype=np.float64), where=(N > 0)
-            )
+            frac = np.divide(S, N, out=np.zeros_like(S, dtype=np.float64), where=(N > 0))
 
             ax.plot(
                 list(range(len(frac))),
@@ -271,9 +274,86 @@ def init_graph():
     return _g
 
 
+def make_default_graph(
+    *,
+    c: float,
+    p: float,
+    delta_in: int,
+    delta_out: int,
+    rng: Optional[np.random.Generator] = None,
+) -> Graph:
+    return Graph(
+        c=c,
+        p=p,
+        delta_in=delta_in,
+        delta_out=delta_out,
+        rng=rng,
+    ).initialize(init_graph(), initial_N=2, initial_S=1)
+
+
+def collect_trajectories_over_runs(
+    *,
+    make_graph: Callable[[int], Graph],
+    evolute_steps: int,
+    k: int,
+    runs: int,
+    mute_output: bool = True,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    n_trajectories = np.empty((runs, evolute_steps + 1), dtype=np.int64)
+    s_trajectories = np.empty((runs, evolute_steps + 1), dtype=np.int64)
+    ratios = np.empty((runs, evolute_steps + 1), dtype=np.float64)
+
+    for run_idx in range(runs):
+        g = make_graph(run_idx)
+        if mute_output:
+            with contextlib.redirect_stdout(io.StringIO()):
+                g.evolute(rounds=evolute_steps, k=k)
+        else:
+            g.evolute(rounds=evolute_steps, k=k)
+
+        n_total, s_total, ratio = g.totals()
+        n_trajectories[run_idx, :] = n_total
+        s_trajectories[run_idx, :] = s_total
+        ratios[run_idx, :] = ratio
+
+    return n_trajectories, s_trajectories, ratios
+
+
+def sample_kstar_over_runs(
+    *,
+    make_graph: Callable[[int], Graph],
+    k_star: np.ndarray,
+    truncation_k: int,
+    mute_output: bool = True,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    runs = int(k_star.size)
+    if runs == 0:
+        return (
+            np.empty(0, dtype=np.int64),
+            np.empty(0, dtype=np.int64),
+            np.empty(0, dtype=np.float64),
+        )
+
+    max_steps = int(k_star.max())
+    n_trajectories, s_trajectories, ratios = collect_trajectories_over_runs(
+        make_graph=make_graph,
+        evolute_steps=max_steps,
+        k=truncation_k,
+        runs=runs,
+        mute_output=mute_output,
+    )
+
+    row_index = np.arange(runs, dtype=np.int64)
+    return (
+        n_trajectories[row_index, k_star],
+        s_trajectories[row_index, k_star],
+        ratios[row_index, k_star],
+    )
+
+
 def _avg_totals_over_runs(
     *,
-    make_graph: Callable[[], Graph],
+    make_graph: Callable[[int], Graph],
     evolute_steps: int,
     k: int,
     runs: int,
@@ -285,70 +365,54 @@ def _avg_totals_over_runs(
       - .N_total: Sequence[float]
       - .S_total: Sequence[float]
     """
-    N_sum: Optional[np.ndarray] = None
-    S_sum: Optional[np.ndarray] = None
+    n_trajectories, s_trajectories, _ratios = collect_trajectories_over_runs(
+        make_graph=make_graph,
+        evolute_steps=evolute_steps,
+        k=k,
+        runs=runs,
+        mute_output=False,
+    )
+    return n_trajectories.mean(axis=0), s_trajectories.mean(axis=0)
 
-    for _ in range(runs):
-        g = make_graph()
-        g.evolute(rounds=evolute_steps, k=k)
 
-        Nt = np.asarray(g.N_total, dtype=np.float64)
-        St = np.asarray(g.S_total, dtype=np.float64)
+def main() -> None:
+    # --- experiment config ---
+    RUNS = 20
+    EVOLUTE_STEPS = 500
+    K = 10_000
 
-        if N_sum is None:
-            N_sum = Nt.copy()
-            S_sum = St.copy()
-        else:
-            if len(N_sum) != len(Nt):
-                raise ValueError(
-                    f"Length mismatch across runs: got {len(Nt)} but expected {len(N_sum)}. "
-                    "Ensure each run produces the same number of recorded points."
+    # Overlay these c values on one figure
+    C_VALUES = [0.1, 0.2, 0.3]
+    P_VALUES = [0.1, 0.5, 0.9, 0.99]
+
+    DELTA_IN = 1
+    DELTA_OUT = 1
+
+    for P in P_VALUES:
+        series = []
+        for c in C_VALUES:
+
+            def make_graph_for_c(_run_idx: int, c_=c):
+                return make_default_graph(
+                    c=c_,
+                    p=P,
+                    delta_in=DELTA_IN,
+                    delta_out=DELTA_OUT,
                 )
-            N_sum += Nt
-            S_sum += St
 
-    assert N_sum is not None and S_sum is not None
-    return N_sum / runs, S_sum / runs
+            N_avg, S_avg = _avg_totals_over_runs(
+                make_graph=make_graph_for_c,
+                evolute_steps=EVOLUTE_STEPS,
+                k=K,
+                runs=RUNS,
+            )
+            series.append((N_avg, S_avg, f"c={c}"))
 
-
-# --- experiment config ---
-RUNS = 20
-EVOLUTE_STEPS = 500
-K = 10_000
-
-# Overlay these c values on one figure
-C_VALUES = [0.1, 0.2, 0.3]
-P_VALUES = [0.1, 0.5, 0.9, 0.99]
-
-DELTA_IN = 1
-DELTA_OUT = 1
+        Graph.draw_ns_statistic(series, filename=f"{P}_many_c_{RUNS}_stat")
 
 
-for P in P_VALUES:
-    # --- build all series ---
-    series = []
-    for c in C_VALUES:
-
-        def make_graph_for_c(c_=c):
-            # Replace the following with your actual initialization:
-            g = Graph(
-                c=c,
-                p=P,
-                delta_in=1,
-                delta_out=1,
-            ).initialize(init_graph(), initial_N=2, initial_S=1)
-            return g
-
-        N_avg, S_avg = _avg_totals_over_runs(
-            make_graph=make_graph_for_c,
-            evolute_steps=EVOLUTE_STEPS,
-            k=K,
-            runs=RUNS,
-        )
-        series.append((N_avg, S_avg, f"c={c}"))
-
-    # --- save plot ---
-    Graph.draw_ns_statistic(series, filename=f"{P}_many_c_{RUNS}_stat")
+if __name__ == "__main__":
+    main()
 
 
 # ROUNDS = 20

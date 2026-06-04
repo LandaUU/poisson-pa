@@ -1,6 +1,28 @@
-images/**
-venv
-gnuplot*
-__pycache__
+.DS_Store
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Local notebooks and checkpoints
+.ipynb_checkpoints/
+
+# Downloaded datasets
+data/*
+!data/README.md
+
+# Generated experiment artifacts
+results/
+images/
+*.csv
 *.dat
 *.png
+graph*.png
+gnuplot_out/
+gnuplot*

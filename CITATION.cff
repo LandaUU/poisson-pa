@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite this repository."
+title: "Wang-Resnick Poisson Preferential Attachment Experiments"
+authors:
+  - family-names: "Waimer"
+    given-names: "Y. E."
+license: MIT
+keywords:
+  - preferential attachment
+  - random graphs
+  - temporal networks
+  - Wang-Resnick model
+  - information spreading

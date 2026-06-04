@@ -1,0 +1,42 @@
+[project]
+name = "wang-resnick-pa-experiments"
+version = "0.1.0"
+description = "Wang-Resnick Poisson preferential attachment experiments for information spreading in dynamic random graphs."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [
+  { name = "Yakov Waimer" },
+]
+dependencies = [
+  "matplotlib>=3.10.0",
+  "networkx>=3.5",
+  "numpy>=2.3.0",
+  "requests>=2.32.0",
+  "scipy>=1.16.0",
+]
+
+[dependency-groups]
+dev = [
+  "ruff>=0.12.0",
+]
+
+[project.optional-dependencies]
+notebook = [
+  "ipykernel>=6.29.0",
+  "jupyterlab>=4.4.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+  "E",
+  "F",
+  "I",
+]
+ignore = [
+  "E501",
+]
