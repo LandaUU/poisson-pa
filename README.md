@@ -1,8 +1,137 @@
 # Wang-Resnick Poisson Preferential Attachment Experiments
 
+## EN
+
+This repository contains an implementation of the Wang-Resnick model, numerical experiments for `N_k`, `|S_k|`, `|S_k| / N_k`, experiments at a random time `K*`, and model fitting for real SNAP temporal networks.
+
+### Contents
+
+- `main.py` - base implementation of graph evolution and message propagation.
+- `scripts/run_nk_experiment.py`, `scripts/run_nk_grid.py` - checks of theoretical moments and the distribution of `N_k`.
+- `scripts/run_pn_experiment.py` - checks of the local successful-transmission probability `p_n` for a fixed graph state.
+- `scripts/run_sk_experiment.py`, `scripts/run_sk_grid.py` - simulations of `|S_k|` and relative coverage `|S_k| / N_k`.
+- `scripts/run_sk_kstar_experiment.py`, `scripts/run_sk_kstar_grid.py` - simulations at a random time `K* ~ Poisson(nu T*)`.
+- `model_fitting.py`, `scripts/run_collegemsg_fit.py`, `scripts/run_real_dataset_tail_comparison.py` - model fitting and diagnostics for real temporal networks.
+- `notebooks/wang_resnick_visuals.ipynb` - Jupyter notebook for interactive figure generation.
+- `scripts/download_snap_data.py` - downloader for the SNAP datasets used in the applied part of the project.
+- `data/README.md` - input data list and source links.
+
+Generated results are saved to `results/`. This directory is not versioned: artifacts can be reproduced by running the corresponding commands.
+
+### Installation
+
+The project uses Python and `uv`.
+
+```bash
+make sync
+```
+
+If `uv` is not installed, follow the official documentation: <https://docs.astral.sh/uv/>.
+
+### Jupyter Notebook
+
+For interactive figure generation in JupyterLab, run:
+
+```bash
+make notebook
+```
+
+The notebook `notebooks/wang_resnick_visuals.ipynb` uses the main repository code and saves generated images to `results/notebook/figures/`.
+
+### SNAP Data Download
+
+Raw SNAP files are not included in the repository. To download the datasets, run:
+
+```bash
+make snap-download
+```
+
+By default, this downloads:
+
+- `data/CollegeMsg.txt.gz`
+- `data/email-Eu-core-temporal.txt.gz`
+- `data/sx-mathoverflow-a2q.txt.gz`
+
+To download the files again, run:
+
+```bash
+uv run python -m scripts.download_snap_data --force
+```
+
+To download the additional departmental files `email-Eu-core-temporal-Dept1..4`, run:
+
+```bash
+uv run python -m scripts.download_snap_data --all
+```
+
+### Main Commands
+
+Formatting and lint checks:
+
+```bash
+make check
+```
+
+Parameter-grid experiment for `N_k`:
+
+```bash
+make run-nk-grid
+```
+
+Experiment for the local probability `p_n`:
+
+```bash
+make run-pn
+```
+
+Main experiment for `|S_k|` and `|S_k| / N_k`:
+
+```bash
+make run-sk-grid
+```
+
+Experiment at the random time `K*`:
+
+```bash
+make run-sk-kstar-grid
+```
+
+Model fitting on CollegeMsg:
+
+```bash
+make snap-download
+make run-collegemsg-fit
+```
+
+To run fitting for other SNAP datasets, use the `scripts.run_collegemsg_fit` module and pass `--data-path`, `--dataset-label`, and `--output-dir`.
+
+Example for email-Eu-core temporal:
+
+```bash
+uv run python -m scripts.run_collegemsg_fit \
+  --data-path data/email-Eu-core-temporal.txt.gz \
+  --dataset-label "email-Eu-core temporal" \
+  --output-dir results/email_eu_core_temporal_fit
+```
+
+Example for MathOverflow `a2q`:
+
+```bash
+uv run python -m scripts.run_collegemsg_fit \
+  --data-path data/sx-mathoverflow-a2q.txt.gz \
+  --dataset-label "MathOverflow a2q" \
+  --output-dir results/mathoverflow_a2q_fit
+```
+
+### License
+
+The code is distributed under the MIT license. See `LICENSE`.
+
+## RU
+
 Репозиторий содержит реализацию модели Ванга-Резника, численные эксперименты для величин `N_k`, `|S_k|`, `|S_k| / N_k`, эксперименты в случайный момент `K*`, а также fitting модели по реальным временным сетям SNAP.
 
-## Содержание
+### Содержание
 
 - `main.py` - базовая реализация модели эволюции графа и распространения сообщения.
 - `scripts/run_nk_experiment.py`, `scripts/run_nk_grid.py` - проверка теоретических моментов и распределения `N_k`.
@@ -16,7 +145,7 @@
 
 Сгенерированные результаты сохраняются в `results/`. Эта директория не версионируется: артефакты воспроизводятся запуском соответствующих команд.
 
-## Установка
+### Установка
 
 Проект использует Python и `uv`.
 
@@ -26,7 +155,7 @@ make sync
 
 Если `uv` не установлен, его можно поставить по инструкции из документации: <https://docs.astral.sh/uv/>.
 
-## Jupyter Notebook
+### Jupyter Notebook
 
 Для интерактивной генерации изображений через JupyterLab используйте:
 
@@ -36,7 +165,7 @@ make notebook
 
 Notebook `notebooks/wang_resnick_visuals.ipynb` использует основной код репозитория и сохраняет сгенерированные изображения в `results/notebook/figures/`.
 
-## Загрузка SNAP-Данных
+### Загрузка SNAP-Данных
 
 Сырые SNAP-файлы не входят в репозиторий. Для загрузки датасетов выполните:
 
@@ -62,7 +191,7 @@ uv run python -m scripts.download_snap_data --force
 uv run python -m scripts.download_snap_data --all
 ```
 
-## Основные Запуски
+### Основные Запуски
 
 Проверка форматирования и lint:
 
@@ -121,6 +250,6 @@ uv run python -m scripts.run_collegemsg_fit \
   --output-dir results/mathoverflow_a2q_fit
 ```
 
-## License
+### License
 
 Код распространяется под лицензией MIT. См. `LICENSE`.
