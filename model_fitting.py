@@ -19,9 +19,9 @@ import numpy as np
 from scipy import stats
 
 from main import Graph, init_graph
+from propagation import MessageRule, batch_recipients
 
 HourMode = Literal["span", "active"]
-MessageRule = Literal["source_to_target", "target_to_source"]
 PlotLanguage = Literal["en", "ru"]
 
 
@@ -77,6 +77,8 @@ class MessageCoverage:
     nodes: np.ndarray
     informed: np.ndarray
     ratios: np.ndarray
+    seed_node: int | None = None
+    seed_selection: str = "first_event_source"
 
 
 @dataclass(slots=True)
@@ -310,21 +312,11 @@ def _message_delta(
     informed: set[int],
     rule: MessageRule,
 ) -> int:
-    before = len(informed)
-    for source, target in edges:
-        if rule == "source_to_target":
-            if source in informed:
-                informed.add(target)
-        elif rule == "target_to_source":
-            if target in informed:
-                informed.add(source)
-        else:
-            raise ValueError("rule must be 'source_to_target' or 'target_to_source'")
-
-    for node in informed:
-        if node in graph:
-            graph.nodes[node]["message"] = True
-    return len(informed) - before
+    recipients = batch_recipients(edges, informed, rule)
+    informed.update(recipients)
+    for node in recipients:
+        graph.nodes[node]["message"] = True
+    return len(recipients)
 
 
 def simulate_fitted_model(
@@ -358,42 +350,12 @@ def simulate_fitted_model(
             delta_out=fit.delta_out_hat,
             lambda_func=lambda_func,
             rng=np.random.default_rng(seed + run_idx),
+            message_rule=message_rule,
         ).initialize(init_graph(), initial_N=2, initial_S=1)
 
-        if message_rule == "target_to_source":
-            with redirect_stdout(io.StringIO()):
-                graph.evolute(rounds=steps, k=truncation_k)
-            nodes, informed, ratios = graph.totals()
-        else:
-            informed_nodes: set[int] = {0}
-            nodes_total = [2]
-            informed_total = [1]
-            with redirect_stdout(io.StringIO()):
-                for current_round in range(1, steps + 1):
-                    edges, new_nodes = graph.sample_step_edges(current_round=current_round, k=truncation_k)
-                    graph.N.append(new_nodes)
-                    graph._graph.add_edges_from(edges)
-                    graph.S.append(
-                        _message_delta(
-                            graph=graph._graph,
-                            edges=edges,
-                            informed=informed_nodes,
-                            rule=message_rule,
-                        )
-                    )
-                    graph.N_total.append(graph.N_total[-1] + graph.N[-1])
-                    graph.S_total.append(len(informed_nodes))
-                    nodes_total.append(graph.N_total[-1])
-                    informed_total.append(graph.S_total[-1])
-                graph._round += steps
-            nodes = np.asarray(nodes_total, dtype=np.int64)
-            informed = np.asarray(informed_total, dtype=np.int64)
-            ratios = np.divide(
-                informed,
-                nodes,
-                out=np.zeros_like(informed, dtype=np.float64),
-                where=nodes > 0,
-            )
+        with redirect_stdout(io.StringIO()):
+            graph.evolute(rounds=steps, k=truncation_k)
+        nodes, informed, ratios = graph.totals()
         in_degrees, out_degrees = degree_arrays_from_graph(graph._graph)
         simulated.append(
             SimulatedRun(
@@ -413,7 +375,7 @@ def simulate_fitted_model(
 def temporal_message_coverage(
     edges: Sequence[TemporalEdge],
     *,
-    rule: MessageRule,
+    rule: MessageRule = "target_to_source",
     bucket_seconds: int = 3600,
     initial_source: Optional[int] = None,
 ) -> MessageCoverage:
@@ -438,12 +400,7 @@ def temporal_message_coverage(
         for edge in bucket_edges:
             seen.add(edge.source)
             seen.add(edge.target)
-            if rule == "source_to_target":
-                if edge.source in informed:
-                    informed.add(edge.target)
-            else:
-                if edge.target in informed:
-                    informed.add(edge.source)
+            informed.update(batch_recipients([(edge.source, edge.target)], informed, rule))
         nodes[bucket_idx] = len(seen)
         informed_counts[bucket_idx] = len(informed & seen)
 
@@ -459,6 +416,8 @@ def temporal_message_coverage(
         nodes=nodes,
         informed=informed_counts,
         ratios=ratios,
+        seed_node=ordered[0].source if initial_source is None else initial_source,
+        seed_selection="first_event_source" if initial_source is None else "explicit_initial_source",
     )
 
 
@@ -932,6 +891,20 @@ def fit_to_json_dict(
         "config": config,
         "fit": asdict(fit),
         "selected_message_rule": selected_coverage.rule,
+        "propagation": {
+            "real_direction": selected_coverage.rule,
+            "synthetic_direction": simulated_runs[0].message_rule
+            if simulated_runs
+            else config.get("synthetic_message_rule"),
+            "synthetic_update": "batch_start_snapshot",
+            "temporal_update": "one_event_at_a_time",
+            "equal_timestamp_order": "stable_input_order",
+            "active_contacts": "new_edges_only",
+            "real_seed_selection": selected_coverage.seed_selection,
+            "real_seed_node": selected_coverage.seed_node,
+            "synthetic_seed_selection": config.get("synthetic_seed_selection", "initial_graph_node_0"),
+            "synthetic_seed_node": config.get("synthetic_seed_node", 0),
+        },
         "real_message_coverage": coverage_summary,
         "simulation": simulation_summary,
     }

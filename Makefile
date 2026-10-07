@@ -4,17 +4,18 @@ UV ?= uv
 PYTHON ?= python3
 UV_CACHE_DIR ?= /tmp/uv-cache-master-deg-project
 RUFF_CACHE_DIR ?= /tmp/ruff-cache-master-deg-project
-PY_FILES := main.py model_fitting.py scripts/__init__.py scripts/download_snap_data.py scripts/run_collegemsg_fit.py scripts/run_real_dataset_tail_comparison.py scripts/run_nk_experiment.py scripts/run_nk_grid.py scripts/run_pn_experiment.py scripts/run_sk_experiment.py scripts/run_sk_grid.py scripts/run_sk_kstar_experiment.py scripts/run_sk_kstar_grid.py
+PY_FILES := propagation.py tests main.py model_fitting.py scripts/__init__.py scripts/download_snap_data.py scripts/run_collegemsg_fit.py scripts/run_real_dataset_tail_comparison.py scripts/run_nk_experiment.py scripts/run_nk_grid.py scripts/run_pn_experiment.py scripts/run_sk_experiment.py scripts/run_sk_grid.py scripts/run_sk_kstar_experiment.py scripts/run_sk_kstar_grid.py
 
 .DEFAULT_GOAL := help
 
-.PHONY: help sync format lint check notebook snap-download run-nk run-nk-grid run-pn run-sk run-sk-grid run-sk-kstar run-sk-kstar-grid run-collegemsg-fit
+.PHONY: test help sync format lint check notebook snap-download run-nk run-nk-grid run-pn run-sk run-sk-grid run-sk-kstar run-sk-kstar-grid run-collegemsg-fit
 
 help:
 	@echo "Available targets:"
 	@echo "  make sync        - install/update dependencies via uv"
 	@echo "  make format      - format Python files with ruff"
 	@echo "  make lint        - lint Python files with ruff"
+	@echo "  make test        - run pytest"
 	@echo "  make check       - run format check and lint"
 	@echo "  make notebook    - launch JupyterLab with the visualization notebook"
 	@echo "  make snap-download - download SNAP temporal datasets"
@@ -26,6 +27,9 @@ help:
 	@echo "  make run-sk-kstar      - run the default K* experiment for S_k"
 	@echo "  make run-sk-kstar-grid - run the default K* parameter grid"
 	@echo "  make run-collegemsg-fit - fit the model to SNAP CollegeMsg"
+
+test:
+	UV_CACHE_DIR=$(UV_CACHE_DIR) $(UV) run python -m pytest -q
 
 sync:
 	UV_CACHE_DIR=$(UV_CACHE_DIR) $(UV) sync --dev

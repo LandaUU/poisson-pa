@@ -48,8 +48,8 @@ class CollegeMsgFitConfig:
     min_tail: int = 10
     max_tail_fraction: float = 0.5
     angular_quantile: float = 0.995
-    real_message_rule: MessageRule = "source_to_target"
-    synthetic_message_rule: MessageRule = "source_to_target"
+    real_message_rule: MessageRule = "target_to_source"
+    synthetic_message_rule: MessageRule = "target_to_source"
     runs: int = 20
     seed: int = 42
     truncation_k: int | None = None
@@ -76,13 +76,13 @@ def parse_args() -> CollegeMsgFitConfig:
     parser.add_argument(
         "--real-message-rule",
         choices=("source_to_target", "target_to_source"),
-        default="source_to_target",
+        default="target_to_source",
         help="Rule used for the real temporal coverage curve.",
     )
     parser.add_argument(
         "--synthetic-message-rule",
         choices=("source_to_target", "target_to_source"),
-        default="source_to_target",
+        default="target_to_source",
         help="Rule used for message propagation on synthetic fitted trajectories.",
     )
     parser.add_argument("--runs", type=int, default=20)

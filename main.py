@@ -10,6 +10,8 @@ import networkx as nx
 import numpy as np
 import scipy as sp
 
+from propagation import MessageRule, batch_recipients
+
 if "MPLBACKEND" not in os.environ:
     matplotlib.use("TkAgg" if os.environ.get("DISPLAY") else "Agg")
 
@@ -39,6 +41,7 @@ class Graph:
         delta_out: int,
         lambda_func: Callable[[int, float], float] = lambda_f,
         rng: Optional[np.random.Generator] = None,
+        message_rule: MessageRule = "target_to_source",
     ):
         self.params = GraphParams(
             c=c,
@@ -47,6 +50,8 @@ class Graph:
             delta_out=delta_out,
         )
         self.lambda_func = lambda_func
+        batch_recipients([], set(), message_rule)  # Validate even for zero-step runs.
+        self.message_rule = message_rule
         self.rng = rng if rng is not None else np.random.default_rng()
 
         self.N: list[int] = []
@@ -146,15 +151,12 @@ class Graph:
         return pin, pout
 
     def _simple_message_distribution(self, G: nx.MultiDiGraph, edges: list[tuple[int, int]]) -> None:
-        """В случае, если передача сообщения не происходит далее по цепочке,
-        то можно использовать эту функцию"""
-
-        self.S.append(0)
-
-        for w, v in edges:
-            if G.nodes[v].get("message") and not G.nodes[w].get("message"):
-                G.nodes[w]["message"] = True
-                self.S[-1] += 1
+        """Apply new contacts once, with no cascade inside the batch."""
+        informed = {node for node, attrs in G.nodes(data=True) if attrs.get("message", False)}
+        recipients = batch_recipients(edges, informed, self.message_rule)
+        for node in recipients:
+            G.nodes[node]["message"] = True
+        self.S.append(len(recipients))
 
     def evolute(self, rounds: int, k: int = 10**5) -> Self:
         for current_round in range(self._round + 1, self._round + rounds + 1):
