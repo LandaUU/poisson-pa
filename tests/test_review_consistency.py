@@ -1,7 +1,42 @@
+from collections import defaultdict
+from itertools import product
+
 import networkx as nx
 import numpy as np
+import pytest
 
 from main import Graph
+
+
+def test_exact_two_contact_law_counts_vertices_not_contacts():
+    # Reviewer 3 counterexample: two equal-weight old nodes, only 0 informed.
+    categories = [("new", None, 0, 0.25), ("new", None, 1, 0.25)]
+    categories += [("old", u, v, 0.125) for u in range(2) for v in range(2)]
+    law = defaultdict(float)
+    for pair in product(categories, repeat=2):
+        initial = nx.MultiDiGraph([(0, 0), (1, 1)])
+        initial.nodes[0]["message"] = True
+        graph = Graph(0.2, 0.5, 1, 1).initialize(initial, 2, 1)
+        batch = []
+        births = 0
+        probability = 1.0
+        for kind, u, v, weight in pair:
+            if kind == "new":
+                u = 2 + births
+                births += 1
+            batch.append((u, v))
+            probability *= weight
+        graph._graph.add_edges_from(batch)
+        graph._simple_message_distribution(graph._graph, batch)
+        law[births, graph.S[-1]] += probability
+    distribution = {
+        delta: sum(value for (_, informed), value in law.items() if informed == delta) for delta in range(3)
+    }
+    assert sum(law.values()) == pytest.approx(1)
+    assert distribution == pytest.approx({0: 0.390625, 1: 0.484375, 2: 0.125})
+    assert distribution[2] != pytest.approx(0.375**2)  # The rejected binomial-contact shortcut.
+    for births, expected in enumerate((0.25, 0.5, 0.25)):
+        assert sum(value for (count, _), value in law.items() if count == births) == pytest.approx(expected)
 
 
 def test_arbitrary_G0_normalization_and_frozen_batch_weights(monkeypatch):

@@ -89,6 +89,14 @@ class Graph:
 
     def _get_probabilities(self, n: int, c: float, k: int):
         lambda_val = self.lambda_func(n + 1, c)
+        if k < 1:
+            raise ValueError("Poisson truncation k must be positive")
+        if not np.isfinite(lambda_val) or lambda_val < 0:
+            raise ValueError("Poisson lambda must be finite and nonnegative")
+        if lambda_val == 0:
+            weights = np.zeros(k)
+            weights[0] = 1.0
+            return weights
         ks = np.arange(1, k + 1)
 
         log_probs = -lambda_val + (ks - 1) * np.log(lambda_val) - sp.special.gammaln(ks)
