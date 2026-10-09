@@ -27,6 +27,9 @@ help:
 	@echo "  make run-sk-kstar      - run the default K* experiment for S_k"
 	@echo "  make run-sk-kstar-grid - run the default K* parameter grid"
 	@echo "  make run-collegemsg-fit - fit the model to SNAP CollegeMsg"
+	@echo "  make empirical-smoke - generate small ensembles and render intervals"
+	@echo "  make render-empirical - render conditional intervals from saved inputs"
+	@echo "  make verify-gossip-rate - enumerate fixed-topology completion bounds"
 
 test:
 	UV_CACHE_DIR=$(UV_CACHE_DIR) $(UV) run python -m pytest -q
@@ -77,3 +80,19 @@ COLLEGEMSG_PATH ?= data/CollegeMsg.txt.gz
 
 run-collegemsg-fit:
 	UV_CACHE_DIR=$(UV_CACHE_DIR) $(UV) run $(PYTHON) -m scripts.run_collegemsg_fit --data-path $(COLLEGEMSG_PATH)
+
+# Portable empirical rendering and finite-state verification.
+PY_FILES += scripts/empirical_intervals.py scripts/render_supervisor_revision.py scripts/verify_gossip_rate_bound.py scripts/run_empirical_smoke.py
+.PHONY: empirical-smoke render-empirical verify-gossip-rate
+EMPIRICAL_ARGS ?= --output-dir results/empirical-intervals
+EMPIRICAL_SMOKE_ARGS ?= --output-dir results/empirical-smoke
+GOSSIP_RATE_ARGS ?= --output-file results/gossip-rate-verification.json
+
+empirical-smoke:
+	UV_CACHE_DIR=$(UV_CACHE_DIR) $(UV) run $(PYTHON) -m scripts.run_empirical_smoke $(EMPIRICAL_SMOKE_ARGS)
+
+render-empirical:
+	UV_CACHE_DIR=$(UV_CACHE_DIR) $(UV) run $(PYTHON) -m scripts.render_supervisor_revision $(EMPIRICAL_ARGS)
+
+verify-gossip-rate:
+	UV_CACHE_DIR=$(UV_CACHE_DIR) $(UV) run $(PYTHON) -m scripts.verify_gossip_rate_bound $(GOSSIP_RATE_ARGS)

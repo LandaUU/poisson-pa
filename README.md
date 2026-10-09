@@ -15,6 +15,10 @@ This repository contains an implementation of the Wang-Resnick model, numerical 
 - `notebooks/wang_resnick_visuals.ipynb` - Jupyter notebook for interactive figure generation.
 - `scripts/download_snap_data.py` - downloader for the SNAP datasets used in the applied part of the project.
 - `data/README.md` - input data list and source links.
+- `scripts/render_supervisor_revision.py`, `scripts/empirical_intervals.py` - pointwise conditional Monte Carlo intervals from saved ensembles.
+- `scripts/verify_gossip_rate_bound.py` - independent finite-state checks of a fixed-topology gossip completion bound.
+- `scripts/run_empirical_smoke.py` - small current-model generation/rendering pipeline without manuscript archives.
+
 
 Generated results are saved to `results/`. This directory is not versioned: artifacts can be reproduced by running the corresponding commands.
 
@@ -142,6 +146,10 @@ The code is distributed under the MIT license. See `LICENSE`.
 - `notebooks/wang_resnick_visuals.ipynb` - Jupyter notebook для интерактивной генерации графиков.
 - `scripts/download_snap_data.py` - загрузка SNAP-датасетов, используемых в прикладной части.
 - `data/README.md` - список входных данных и ссылки на источники.
+- `scripts/render_supervisor_revision.py`, `scripts/empirical_intervals.py` — точечные условные Monte Carlo интервалы по сохранённым ансамблям.
+- `scripts/verify_gossip_rate_bound.py` — независимая проверка границы завершения gossip на фиксированной топологии.
+- `scripts/run_empirical_smoke.py` — малый запуск генерации ансамблей и построения интервалов без архива статьи.
+
 
 Сгенерированные результаты сохраняются в `results/`. Эта директория не версионируется: артефакты воспроизводятся запуском соответствующих команд.
 
