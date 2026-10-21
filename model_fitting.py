@@ -54,6 +54,18 @@ class TailFit:
 
 
 @dataclass(slots=True, frozen=True)
+class GrowthDiagnostics:
+    initial_nodes: tuple[int, ...]
+    existing_endpoints: int
+    new_source_only: int
+    new_target_only: int
+    both_new: int
+    new_self_loop: int
+    new_node_count: int
+    batch_violating_events: int
+
+
+@dataclass(slots=True, frozen=True)
 class PoissonPAFit:
     lambda_hat: float
     p_hat: float
@@ -68,6 +80,10 @@ class PoissonPAFit:
     time_aggregation: TimeAggregation
     in_tail: TailFit
     out_tail: TailFit
+    initial_node_count: int = 2
+    mean_edges_per_step: float | None = None
+    calibration_method: str = "supplied_parameters"
+    growth_diagnostics: GrowthDiagnostics | None = None
 
 
 @dataclass(slots=True)
@@ -194,11 +210,94 @@ def count_new_node_appearances(edges: Sequence[TemporalEdge]) -> int:
     return new_nodes
 
 
+def diagnose_growth(
+    edges: Sequence[TemporalEdge],
+    *,
+    bucket_seconds: int = 3600,
+    initial_nodes: Sequence[int] | None = None,
+) -> GrowthDiagnostics:
+    """Classify new endpoints and count violations of the batch growth rule.
+
+    Unless supplied, initial_nodes contains the first event's endpoints.
+    Event classes use sequential history; batch checks use the vertex set
+    at the start of each bucket.
+    """
+    if not edges:
+        raise ValueError("Need at least one temporal edge")
+    if bucket_seconds <= 0:
+        raise ValueError("bucket_seconds must be positive")
+    ordered = sorted(edges, key=lambda edge: edge.timestamp)
+    initial = (
+        tuple(sorted({ordered[0].source, ordered[0].target}))
+        if initial_nodes is None
+        else tuple(sorted(set(initial_nodes)))
+    )
+    if not initial:
+        raise ValueError("initial_nodes must contain at least one vertex")
+    seen = set(initial)
+    counts = dict(existing_endpoints=0, new_source_only=0, new_target_only=0, both_new=0, new_self_loop=0)
+    batch_old = set(initial)
+    bucket_nodes: set[int] = set()
+    current_bucket = ordered[0].timestamp // bucket_seconds
+    violations = 0
+    for edge in ordered:
+        bucket = edge.timestamp // bucket_seconds
+        if bucket != current_bucket:
+            batch_old.update(bucket_nodes)
+            bucket_nodes.clear()
+            current_bucket = bucket
+        source_new = edge.source not in seen
+        target_new = edge.target not in seen
+        if source_new and target_new:
+            category = "new_self_loop" if edge.source == edge.target else "both_new"
+        elif source_new:
+            category = "new_source_only"
+        elif target_new:
+            category = "new_target_only"
+        else:
+            category = "existing_endpoints"
+        counts[category] += 1
+        if edge.target not in batch_old or (edge.source not in batch_old and edge.source in bucket_nodes):
+            violations += 1
+        bucket_nodes.update((edge.source, edge.target))
+        seen.update((edge.source, edge.target))
+    return GrowthDiagnostics(
+        initial_nodes=initial,
+        new_node_count=len(seen) - len(initial),
+        batch_violating_events=violations,
+        **counts,
+    )
+
+
+def edge_count_calibration(
+    edges: Sequence[TemporalEdge],
+    *,
+    bucket_seconds: int = 3600,
+    hour_mode: HourMode = "active",
+) -> tuple[TimeAggregation, float, float]:
+    """Match the mean nonempty interval count to 1 + Poisson(lambda)."""
+    if not edges:
+        raise ValueError("Need at least one temporal edge")
+    if hour_mode not in {"span", "active"}:
+        raise ValueError("hour_mode must be 'span' or 'active'")
+    aggregation = time_aggregation(edges, bucket_seconds=bucket_seconds)
+    if hour_mode == "span" and aggregation.span_buckets != aggregation.active_buckets:
+        raise ValueError("Empty intervals cannot be steps of a unit-shifted Poisson model; use active intervals")
+    steps = aggregation.active_buckets if hour_mode == "active" else aggregation.span_buckets
+    mean_edges = len(edges) / steps
+    return aggregation, mean_edges, mean_edges - 1.0
+
+
 def _ks_tail_distance(ratios: np.ndarray, tail_index: float) -> float:
-    y_values = np.unique(ratios)
-    empirical = np.array([(ratios > y).mean() for y in y_values], dtype=np.float64)
-    theoretical = np.power(y_values, -tail_index)
-    return float(np.max(np.abs(empirical - theoretical)))
+    # Check both sides of each empirical jump and the boundary y=1.
+    y_values, counts = np.unique(ratios, return_counts=True)
+    cumulative = np.cumsum(counts)
+    right_tail = (ratios.size - cumulative) / ratios.size
+    left_tail = (ratios.size - cumulative + counts) / ratios.size
+    theoretical = np.power(y_values.astype(np.float64), -tail_index)
+    jump_distances = np.maximum(np.abs(right_tail - theoretical), np.abs(left_tail - theoretical))
+    boundary_distance = abs(float(np.mean(ratios > 1.0)) - 1.0)
+    return float(max(np.max(jump_distances), boundary_distance))
 
 
 def hill_tail_fit(
@@ -255,17 +354,18 @@ def fit_poisson_pa_parameters(
     hour_mode: HourMode = "active",
     min_tail: int = 10,
     max_tail_fraction: float = 0.5,
+    initial_nodes: Sequence[int] | None = None,
+    tail_edges: Sequence[TemporalEdge] | None = None,
 ) -> PoissonPAFit:
-    if hour_mode not in {"span", "active"}:
-        raise ValueError("hour_mode must be 'span' or 'active'")
-
-    aggregation = time_aggregation(edges, bucket_seconds=bucket_seconds)
-    denominator = aggregation.active_buckets if hour_mode == "active" else aggregation.span_buckets
-    if denominator <= 0:
-        raise ValueError("Non-positive time denominator for lambda estimate")
-
-    in_degrees, out_degrees, nodes = degree_arrays_from_edges(edges)
-    new_node_count = count_new_node_appearances(edges)
+    aggregation, mean_edges, lambda_hat = edge_count_calibration(
+        edges,
+        bucket_seconds=bucket_seconds,
+        hour_mode=hour_mode,
+    )
+    in_degrees, out_degrees, nodes = degree_arrays_from_edges(edges if tail_edges is None else tail_edges)
+    growth = diagnose_growth(edges, bucket_seconds=bucket_seconds, initial_nodes=initial_nodes)
+    new_node_count = growth.new_node_count
+    # Match vertex growth even when observed events violate the W-R growth rule.
     p_hat = new_node_count / len(edges)
     if not (0.0 < p_hat < 1.0):
         raise ValueError(f"Estimated p must be inside (0, 1), got {p_hat:g}")
@@ -278,19 +378,23 @@ def fit_poisson_pa_parameters(
     delta_out = (iota_out * (1.0 - p_hat) - 1.0) / p_hat
 
     return PoissonPAFit(
-        lambda_hat=len(edges) / denominator,
+        lambda_hat=lambda_hat,
         p_hat=float(p_hat),
         delta_in_hat=float(delta_in),
         delta_out_hat=float(delta_out),
         iota_in_hat=float(iota_in),
         iota_out_hat=float(iota_out),
         edge_count=len(edges),
-        node_count=len(nodes),
+        node_count=len(set(nodes) | set(growth.initial_nodes)),
         new_node_count=new_node_count,
         hour_mode=hour_mode,
         time_aggregation=aggregation,
         in_tail=in_tail,
         out_tail=out_tail,
+        initial_node_count=len(growth.initial_nodes),
+        mean_edges_per_step=mean_edges,
+        calibration_method="effective_moment_matching",
+        growth_diagnostics=growth,
     )
 
 
@@ -327,6 +431,8 @@ def simulate_fitted_model(
     seed: int = 42,
     truncation_k: Optional[int] = None,
     message_rule: MessageRule = "target_to_source",
+    initial_state: nx.MultiDiGraph | None = None,
+    initial_informed: Sequence[int] | None = None,
 ) -> list[SimulatedRun]:
     if fit.delta_in_hat <= 0.0 or fit.delta_out_hat <= 0.0:
         raise ValueError(
@@ -342,7 +448,28 @@ def simulate_fitted_model(
     lambda_func = constant_lambda(fit.lambda_hat)
     simulated: list[SimulatedRun] = []
 
+    if fit.initial_node_count < 1:
+        raise ValueError("initial_node_count must be positive")
+    if initial_state is None:
+        template = init_graph() if fit.initial_node_count == 2 else nx.MultiDiGraph()
+        if fit.initial_node_count != 2:
+            template.add_edges_from((node, node) for node in range(fit.initial_node_count))
+            template.nodes[0]["message"] = True
+    else:
+        template = initial_state.copy()
+        if set(template.nodes) != set(range(fit.initial_node_count)):
+            raise ValueError("initial_state must have consecutive node ids matching initial_node_count")
+    informed_nodes = (
+        {node for node, attrs in template.nodes(data=True) if attrs.get("message", False)}
+        if initial_informed is None
+        else set(initial_informed)
+    )
+    if not informed_nodes or not informed_nodes <= set(template.nodes):
+        raise ValueError("initial_informed must be a nonempty subset of the initial graph")
+    for node in template.nodes:
+        template.nodes[node]["message"] = node in informed_nodes
     for run_idx in range(runs):
+        initial = template.copy()
         graph = Graph(
             c=0.0,
             p=fit.p_hat,
@@ -351,7 +478,7 @@ def simulate_fitted_model(
             lambda_func=lambda_func,
             rng=np.random.default_rng(seed + run_idx),
             message_rule=message_rule,
-        ).initialize(init_graph(), initial_N=2, initial_S=1)
+        ).initialize(initial, initial_N=fit.initial_node_count, initial_S=len(informed_nodes))
 
         with redirect_stdout(io.StringIO()):
             graph.evolute(rounds=steps, k=truncation_k)
@@ -378,6 +505,7 @@ def temporal_message_coverage(
     rule: MessageRule = "target_to_source",
     bucket_seconds: int = 3600,
     initial_source: Optional[int] = None,
+    initial_nodes: Sequence[int] | None = None,
 ) -> MessageCoverage:
     if rule not in {"source_to_target", "target_to_source"}:
         raise ValueError("rule must be 'source_to_target' or 'target_to_source'")
@@ -392,7 +520,9 @@ def temporal_message_coverage(
         edges_by_bucket[int(edge.timestamp // bucket_seconds - first_bucket)].append(edge)
 
     informed = {ordered[0].source if initial_source is None else initial_source}
-    seen: set[int] = set()
+    seen: set[int] = set() if initial_nodes is None else set(initial_nodes)
+    if initial_nodes is not None and not informed <= seen:
+        raise ValueError("The replay seed must belong to initial_nodes")
     nodes = np.zeros(aggregation.span_buckets, dtype=np.int64)
     informed_counts = np.zeros(aggregation.span_buckets, dtype=np.int64)
 
@@ -891,6 +1021,29 @@ def fit_to_json_dict(
         "config": config,
         "fit": asdict(fit),
         "selected_message_rule": selected_coverage.rule,
+        "calibration": {
+            "method": fit.calibration_method,
+            "lambda_convention": "mean_contacts_per_selected_interval_minus_one"
+            if fit.calibration_method == "effective_moment_matching"
+            else "supplied_parameter",
+            "p_convention": "new_distinct_vertices_after_initial_population_divided_by_fitting_events"
+            if fit.calibration_method == "effective_moment_matching"
+            else "supplied_parameter",
+            "synthetic_initial_graph": config.get("synthetic_initial_graph", "one_self_loop_per_initial_vertex"),
+            "initial_node_count": fit.initial_node_count,
+            "tail_threshold_distance": "supremum_over_y_ge_1_including_both_empirical_jump_limits",
+            "tail_threshold_tie_break": "first_minimizer_in_increasing_k",
+            "limitations": [
+                "Active-interval selection does not establish a unit-shifted Poisson count law.",
+                "Calendar intervals are a calibration convention, not observed model ticks or an estimate of lambda_star.",
+                "Endpoint growth and batch-support diagnostics do not validate preferential attachment.",
+                "Effective p matches total vertex growth; it is not a new-source probability estimate for incompatible events.",
+                "The chosen initial graph and informed set are modeling assumptions recorded in config.",
+                "Full-history calibration is not predictive validation; KS threshold selection is not a goodness-of-fit test.",
+            ]
+            if fit.calibration_method == "effective_moment_matching"
+            else [],
+        },
         "propagation": {
             "real_direction": selected_coverage.rule,
             "synthetic_direction": simulated_runs[0].message_rule

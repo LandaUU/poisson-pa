@@ -69,7 +69,12 @@ def parse_args() -> CollegeMsgFitConfig:
     parser.add_argument("--output-dir", default="results/collegemsg_fit")
     parser.add_argument("--dataset-label", default="observed", help="Label used for the empirical dataset in plots.")
     parser.add_argument("--bucket-seconds", type=int, default=3600)
-    parser.add_argument("--hour-mode", choices=("active", "span"), default="active")
+    parser.add_argument(
+        "--hour-mode",
+        choices=("active", "span"),
+        default="active",
+        help="Moment-calibration intervals; span is unsupported when it includes empty intervals.",
+    )
     parser.add_argument("--min-tail", type=int, default=10)
     parser.add_argument("--max-tail-fraction", type=float, default=0.5)
     parser.add_argument("--angular-quantile", type=float, default=0.995)
@@ -122,6 +127,8 @@ def run(config: CollegeMsgFitConfig) -> Path:
         start_timestamp=config.start_timestamp,
         end_timestamp=config.end_timestamp,
     )
+    if not edges:
+        raise ValueError("No events remain after filtering")
     real_in, real_out, _nodes = degree_arrays_from_edges(edges)
     fit = fit_poisson_pa_parameters(
         edges,
